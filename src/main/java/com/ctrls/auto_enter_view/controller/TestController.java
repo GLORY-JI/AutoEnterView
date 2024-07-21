@@ -14,8 +14,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 @RequiredArgsConstructor
 @RequestMapping("/api-test/aa")
 public class TestController {
-
+  
   private final FilteringService filteringService;
+
 
   @PostMapping
   public ResponseEntity<?> calculateScore(@RequestBody ScoreCalculationRequest request) {
@@ -31,6 +32,6 @@ class ScoreCalculationRequest {
 
   private String candidateKey;
   private String jobPostingKey;
-  
+
 }
 
