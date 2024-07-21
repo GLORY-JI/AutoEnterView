@@ -41,7 +41,8 @@ public class FilteringService {
 
   @Transactional
   public void calculateResumeScore(String candidateKey, String jobPostingKey) {
-    ApplicantEntity applicantEntity = applicantRepository.findByCandidateKeyAndJobPostingKey(candidateKey, jobPostingKey)
+    ApplicantEntity applicantEntity = applicantRepository.findByCandidateKeyAndJobPostingKey(
+            candidateKey, jobPostingKey)
         .orElseThrow(() -> new CustomException(ErrorCode.APPLICANT_NOT_FOUND));
 
     ResumeEntity resumeEntity = resumeRepository.findByCandidateKey(candidateKey)
@@ -69,7 +70,8 @@ public class FilteringService {
     totalScore += calculatePortfolioScore(resumeEntity);
     totalScore += calculateCertificateScore(resumeEntity.getResumeKey());
     totalScore += calculateExperienceScore(resumeEntity.getResumeKey());
-    totalScore += calculateTechStackScore(resumeEntity.getResumeKey(), jobPostingEntity.getJobPostingKey());
+    totalScore += calculateTechStackScore(resumeEntity.getResumeKey(),
+        jobPostingEntity.getJobPostingKey());
     totalScore += calculateEducationScore(resumeEntity, jobPostingEntity);
     totalScore += calculateCareerScore(resumeEntity.getResumeKey(), jobPostingEntity);
 
@@ -91,18 +93,20 @@ public class FilteringService {
 
   // 2. 자격/어학/수상 컬럼 당 score +1
   private int calculateCertificateScore(String resumeKey) {
-    return resumeCertificateRepository.countByResumeKey(resumeKey);
+    return resumeCertificateRepository.countAllByResumeKey(resumeKey);
   }
 
   // 3. 경험/활동/교육 컬럼 당 score +1
   private int calculateExperienceScore(String resumeKey) {
-    return resumeExperienceRepository.countByResumeKey(resumeKey);
+    return resumeExperienceRepository.countAllByResumeKey(resumeKey);
   }
 
   // 4. 기술 스택 : 채용공고에 올라온 것과 이력서에 작성한 것 비교해서 점수화
   private int calculateTechStackScore(String resumeKey, String jobPostingKey) {
-    List<ResumeTechStackEntity> resumeTechStackEntities = resumeTechStackRepository.findTechStacksByResumeKey(resumeKey);
-    List<JobPostingTechStackEntity> jobPostingTechStackEntities = jobPostingTechStackRepository.findTechStacksByJobPostingKey(jobPostingKey);
+    List<ResumeTechStackEntity> resumeTechStackEntities = resumeTechStackRepository.findTechStacksByResumeKey(
+        resumeKey);
+    List<JobPostingTechStackEntity> jobPostingTechStackEntities = jobPostingTechStackRepository.findTechStacksByJobPostingKey(
+        jobPostingKey);
 
     List<TechStack> resumeTechStacks = new ArrayList<>();
     for (ResumeTechStackEntity entity : resumeTechStackEntities) {
@@ -128,8 +132,9 @@ public class FilteringService {
 
   // 5. 학력 - 무관일 경우 전부 0점
   // 제약이 있는 경우
-  private int calculateEducationScore(ResumeEntity resumeEntity, JobPostingEntity jobPostingEntity) {
-    Education resumeEducation = resumeEntity.getScholarship();
+  private int calculateEducationScore(ResumeEntity resumeEntity,
+      JobPostingEntity jobPostingEntity) {
+    Education resumeEducation = resumeEntity.getEducation();
     Education requiredEducation = jobPostingEntity.getEducation();
 
     if (requiredEducation == Education.NONE) {
@@ -146,7 +151,8 @@ public class FilteringService {
   // 6. 경력 (지원자 경력 - 경력 = 값 * 5점) , 카테고리가 일치하는 것만 점수 산정
   private int calculateCareerScore(String resumeKey, JobPostingEntity jobPostingEntity) {
 
-    List<ResumeCareerEntity> candidateCareerList = resumeCareerRepository.findAllByResumeKey(resumeKey);
+    List<ResumeCareerEntity> candidateCareerList = resumeCareerRepository.findAllByResumeKey(
+        resumeKey);
 
     JobCategory requiredJobCategory = jobPostingEntity.getJobCategory();
     int requiredCareer = jobPostingEntity.getCareer();

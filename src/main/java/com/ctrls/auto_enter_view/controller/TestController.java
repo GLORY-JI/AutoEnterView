@@ -10,26 +10,27 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 
+@Controller
+@RequiredArgsConstructor
+@RequestMapping("/api-test/aa")
+public class TestController {
 
-  @Controller
-  @RequiredArgsConstructor
-  @RequestMapping("/api-test")
-  public class TestController {
+  private final FilteringService filteringService;
 
-    private final FilteringService filteringService;
+  @PostMapping
+  public ResponseEntity<?> calculateScore(@RequestBody ScoreCalculationRequest request) {
 
-    @PostMapping
-    public ResponseEntity<?> calculateScore(@RequestBody ScoreCalculationRequest request) {
+    filteringService.calculateResumeScore(request.getCandidateKey(), request.getJobPostingKey());
 
-      filteringService.calculateResumeScore(request.getCandidateKey(), request.getJobPostingKey());
-
-      return ResponseEntity.ok("OK");
-    }
+    return ResponseEntity.ok("OK");
   }
+}
 
-    @Getter
-    class ScoreCalculationRequest {
-      private String candidateKey;
-      private String jobPostingKey;
-  }
+@Getter
+class ScoreCalculationRequest {
+
+  private String candidateKey;
+  private String jobPostingKey;
+  
+}
 
