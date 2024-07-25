@@ -1,4 +1,4 @@
-package com.ctrls.auto_enter_view.util;
+package com.ctrls.auto_enter_view.component;
 
 import java.util.UUID;
 import org.springframework.stereotype.Component;
@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class KeyGenerator {
 
-  public static String generateKey() {
+  public String generateKey() {
 
     return UUID.randomUUID().toString().replace("-", "");
   }
