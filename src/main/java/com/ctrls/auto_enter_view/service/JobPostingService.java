@@ -7,6 +7,7 @@ import static com.ctrls.auto_enter_view.enums.ErrorCode.JOB_POSTING_STEP_NOT_FOU
 import static com.ctrls.auto_enter_view.enums.ErrorCode.NO_AUTHORITY;
 import static com.ctrls.auto_enter_view.enums.ErrorCode.USER_NOT_FOUND;
 
+import com.ctrls.auto_enter_view.component.KeyGenerator;
 import com.ctrls.auto_enter_view.component.MailComponent;
 import com.ctrls.auto_enter_view.dto.common.JobPostingDetailDto;
 import com.ctrls.auto_enter_view.dto.common.MainJobPostingDto;
@@ -33,17 +34,20 @@ import com.ctrls.auto_enter_view.repository.JobPostingImageRepository;
 import com.ctrls.auto_enter_view.repository.JobPostingRepository;
 import com.ctrls.auto_enter_view.repository.JobPostingStepRepository;
 import com.ctrls.auto_enter_view.repository.JobPostingTechStackRepository;
-import com.ctrls.auto_enter_view.component.KeyGenerator;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -65,6 +69,7 @@ public class JobPostingService {
   private final FilteringService filteringService;
   private final MailComponent mailComponent;
   private final KeyGenerator keyGenerator;
+  private final RedisTemplate<String, Object> redisObjectTemplate;
 
   /**
    * 채용 공고 생성하기
@@ -82,6 +87,8 @@ public class JobPostingService {
     CompanyEntity company = companyRepository.findByCompanyKey(companyKey)
         .orElseThrow(() -> new CustomException(COMPANY_NOT_FOUND));
 
+    log.info("채용 공고 생성 : " + company.getCompanyName());
+
     // 현재 회사의 권한 체크
     if (!company.getEmail().equals(userDetails.getUsername())) {
       throw new CustomException(NO_AUTHORITY);
@@ -94,7 +101,19 @@ public class JobPostingService {
     // 스케줄링 코드
     filteringService.scheduleResumeScoringJob(entity.getJobPostingKey(), entity.getEndDate());
 
-    return jobPostingRepository.save(entity);
+    JobPostingEntity jobPostingEntity = jobPostingRepository.save(entity);
+
+    // 캐시 무효화 로직 추가
+    String cacheKeyPattern = "mainJobPostings:*";
+    Set<String> cacheKeys = redisObjectTemplate.keys(cacheKeyPattern);
+
+    if (cacheKeys != null && !cacheKeys.isEmpty()) {
+      redisObjectTemplate.delete(cacheKeys);
+      log.info("채용 공고 생성으로 인해 캐시 무효화");
+    }
+
+    return jobPostingEntity;
+
   }
 
   /**
@@ -109,9 +128,10 @@ public class JobPostingService {
    */
   @Transactional
   public void editJobPosting(UserDetails userDetails, String jobPostingKey, Request request) {
-
     JobPostingEntity jobPostingEntity = jobPostingRepository.findByJobPostingKey(jobPostingKey)
         .orElseThrow(() -> new CustomException(JOB_POSTING_NOT_FOUND));
+
+    log.info("채용 공고 수정 : " + jobPostingEntity.getTitle());
 
     // 지원자 목록 조회
     List<CandidateListEntity> candidateListEntityList = candidateListRepository.findAllByJobPostingKeyAndJobPostingStepId(
@@ -139,10 +159,22 @@ public class JobPostingService {
     // 지원자 목록을 순회하며 이메일 보내기
     notifyCandidates(candidateListEntityList, jobPostingEntity);
 
-    // 지원한 공고 목록 마감날짜 업데이트 하기
     if (willChangeEndDate) {
+      log.info("지원한 공고 목록 마감날짜 업데이트 하기");
       appliedJobPostingRepository.updateEndDateByJobPostingKey(
           jobPostingEntity.getEndDate(), jobPostingKey);
+    }
+
+    // 수정된 채용 공고가 속한 페이지의 캐시 키 패턴 생성
+    String cacheKeyPattern = "mainJobPostings:*";
+
+    // 해당 패턴에 매칭되는 모든 캐시 키 가져오기
+    Set<String> cacheKeys = redisObjectTemplate.keys(cacheKeyPattern);
+
+    if (cacheKeys != null && !cacheKeys.isEmpty()) {
+      // 매칭되는 캐시 키가 있으면 해당 캐시 삭제
+      redisObjectTemplate.delete(cacheKeys);
+      log.info("채용 공고 수정으로 인해 캐시 무효화");
     }
   }
 
@@ -157,6 +189,7 @@ public class JobPostingService {
    */
   @Transactional
   public void deleteJobPosting(UserDetails userDetails, String jobPostingKey) {
+    log.info("채용 공고 삭제하기");
 
     if (verifyExistsByJobPostingKey(jobPostingKey)) {
       throw new CustomException(JOB_POSTING_HAS_CANDIDATES);
@@ -174,6 +207,15 @@ public class JobPostingService {
     }
 
     jobPostingRepository.deleteByJobPostingKey(jobPostingKey);
+
+    // 캐시 무효화 로직 추가
+    String cacheKeyPattern = "mainJobPostings:*";
+    Set<String> cacheKeys = redisObjectTemplate.keys(cacheKeyPattern);
+
+    if (cacheKeys != null && !cacheKeys.isEmpty()) {
+      redisObjectTemplate.delete(cacheKeys);
+      log.info("채용 공고 삭제로 인해 캐시 무효화");
+    }
   }
 
   /**
@@ -185,6 +227,7 @@ public class JobPostingService {
   @Transactional(readOnly = true)
   public List<JobPostingInfoDto> getJobPostingsByCompanyKey(UserDetails userDetails,
       String companyKey) {
+    log.info("회사 본인이 등록한 채용공고 목록 조회");
 
     CompanyEntity company = findCompanyByPrincipal(userDetails);
 
@@ -208,7 +251,16 @@ public class JobPostingService {
   // TODO : 회사가 탈퇴했을 때, 발생하는 문제점 해결하기 - 탈퇴한 회사 이름을 가져오지 못해 에러 발생 상황이 있었음
   @Transactional(readOnly = true)
   public MainJobPostingDto.Response getAllJobPosting(int page, int size) {
-    Pageable pageable = PageRequest.of(page - 1, size);
+    String cacheKey = "mainJobPostings:" + page + "-" + size;
+
+    // Redis : 캐시된 데이터 확인
+    MainJobPostingDto.Response cachedResponse = (MainJobPostingDto.Response) redisObjectTemplate.opsForValue().get(cacheKey);
+    if (cachedResponse != null) {
+      log.info("Redis에서 캐시된 데이터 조회");
+      return cachedResponse;
+    }
+
+    Pageable pageable = PageRequest.of(page - 1, size, Sort.by("endDate").ascending());
     LocalDate currentDate = LocalDate.now();
     Page<JobPostingEntity> jobPostingPage = jobPostingRepository.findByEndDateGreaterThanEqual(
         currentDate, pageable);
@@ -221,13 +273,18 @@ public class JobPostingService {
         .map(this::createJobPostingMainInfo)
         .collect(Collectors.toList());
 
-    log.info("총 {}개의 채용 공고 조회 완료", totalElements);
-
-    return MainJobPostingDto.Response.builder()
+    MainJobPostingDto.Response response = MainJobPostingDto.Response.builder()
         .jobPostingsList(jobPostingMainInfoList)
         .totalPages(totalPages)
         .totalElements(totalElements)
         .build();
+
+    // 조회한 데이터를 Redis 캐싱
+    redisObjectTemplate.opsForValue().set(cacheKey, response, 30, TimeUnit.MINUTES);
+
+    log.info("총 {}개의 채용 공고 조회 완료", totalElements);
+
+    return response;
   }
 
   /**
@@ -240,6 +297,7 @@ public class JobPostingService {
    */
   @Transactional(readOnly = true)
   public JobPostingDetailDto.Response getJobPostingDetail(String jobPostingKey) {
+    log.info("채용 공고 상세 보기");
 
     LocalDate currentDate = LocalDate.now();
 
@@ -269,7 +327,6 @@ public class JobPostingService {
    */
   @Transactional
   public void applyJobPosting(String jobPostingKey, String candidateKey) {
-
     JobPostingEntity jobPostingEntity = jobPostingRepository.findByJobPostingKey(jobPostingKey)
         .orElseThrow(() -> new CustomException(
             JOB_POSTING_NOT_FOUND));
@@ -312,7 +369,7 @@ public class JobPostingService {
    * @param jobPostingKey 채용공고 KEY
    * @return S3 리소스 URL
    */
-  public String getImageUrl(String jobPostingKey) {
+  private String getImageUrl(String jobPostingKey) {
 
     Optional<JobPostingImageEntity> imageEntityOpt = jobPostingImageRepository.findByJobPostingKey(
         jobPostingKey);
@@ -352,7 +409,7 @@ public class JobPostingService {
    * @param companyKey 회사 KEY
    */
   private void verifyCompanyOwnership(CompanyEntity company, String companyKey) {
-
+    log.info("회사 본인 확인");
     if (!company.getCompanyKey().equals(companyKey)) {
       throw new CustomException(NO_AUTHORITY);
     }
@@ -365,7 +422,7 @@ public class JobPostingService {
    * @return 지원자 존재시 TRUE, 없을 시 FALSE
    */
   private boolean verifyExistsByJobPostingKey(String jobPostingKey) {
-
+    log.info("채용 공고에 지원한 지원자가 존재하는지 확인");
     Long firstStep = getJobPostingStepEntity(jobPostingKey).getId();
 
     return candidateListRepository.existsByJobPostingKeyAndJobPostingStepId(
@@ -428,7 +485,7 @@ public class JobPostingService {
    * @param jobPostingKey 채용 공고 PK
    * @return 채용 단계 리스트 List<step>
    */
-  public List<String> getStep(String jobPostingKey) {
+  private List<String> getStep(String jobPostingKey) {
 
     List<JobPostingStepEntity> entities = jobPostingStepRepository.findByJobPostingKey(
         jobPostingKey);
@@ -449,6 +506,7 @@ public class JobPostingService {
    */
   private void notifyCandidates(List<CandidateListEntity> candidates,
       JobPostingEntity jobPostingEntity) {
+    log.info("지원자들에게 채용 공고 수정 알림 메일 전송");
 
     for (CandidateListEntity candidate : candidates) {
       String to = candidateRepository.findByCandidateKey(candidate.getCandidateKey())
@@ -457,7 +515,7 @@ public class JobPostingService {
       String text =
           "지원해주신 <strong>[" + jobPostingEntity.getTitle()
               + "]</strong>의 공고 내용이 수정되었습니다. 확인 부탁드립니다.<br><br>"
-              + "<a href=\"http://localhost:8080/common/job-postings/"
+              + "<a href=\"https://auto-enter-view.link/common/job-postings/"
               + jobPostingEntity.getJobPostingKey() + "\">수정된 채용 공고 확인하기</a>";
       mailComponent.sendHtmlMail(to, subject, text, true);
     }

@@ -20,6 +20,7 @@ import com.ctrls.auto_enter_view.entity.JobPostingEntity;
 import com.ctrls.auto_enter_view.entity.JobPostingStepEntity;
 import com.ctrls.auto_enter_view.entity.MailAlarmInfoEntity;
 import com.ctrls.auto_enter_view.exception.CustomException;
+import com.ctrls.auto_enter_view.repository.CandidateListRepository;
 import com.ctrls.auto_enter_view.repository.CandidateRepository;
 import com.ctrls.auto_enter_view.repository.CompanyRepository;
 import com.ctrls.auto_enter_view.repository.InterviewScheduleRepository;
@@ -58,6 +59,7 @@ public class MailAlarmInfoService {
   private final JobPostingRepository jobPostingRepository;
   private final JobPostingStepRepository jobPostingStepRepository;
   private final CandidateRepository candidateRepository;
+  private final CandidateListRepository candidateListRepository;
   private final MailComponent mailComponent;
   private final Scheduler scheduler;
 
@@ -74,7 +76,7 @@ public class MailAlarmInfoService {
    */
   public void createMailAlarmInfo(String companyKey, String jobPostingKey, Long stepId,
       MailAlarmInfoDto mailAlarmInfoDto, UserDetails userDetails) {
-
+    log.info("메일 예약 생성");
     CompanyEntity company = findCompanyByPrincipal(userDetails);
 
     verifyCompanyOwnership(company, companyKey);
@@ -107,6 +109,37 @@ public class MailAlarmInfoService {
   }
 
   /**
+   * 예약된 메일 조회
+   *
+   * @param companyKey    회사 KEY
+   * @param jobPostingKey 채용 공고 KEY
+   * @param stepId        채용 단계 ID
+   * @return MailAlarmInfoDto 메일 정보 Dto
+   * @throws CustomException INTERVIEW_SCHEDULE_NOT_FOUND 면접 일정 없음 일정이 없음
+   * @throws CustomException MAIL_ALARM_INFO_NOT_FOUND 메일 예약이 없음
+   */
+  public MailAlarmInfoDto getMailAlarmInfo(String companyKey, String jobPostingKey, Long stepId,
+      UserDetails userDetails) {
+    log.info("예약된 메일 조회");
+
+    CompanyEntity company = findCompanyByPrincipal(userDetails);
+
+    verifyCompanyOwnership(company, companyKey);
+
+    InterviewScheduleEntity interviewScheduleEntity = interviewScheduleRepository.findByJobPostingKeyAndJobPostingStepId(
+        jobPostingKey, stepId).orElseThrow(() -> new CustomException(INTERVIEW_SCHEDULE_NOT_FOUND));
+
+    MailAlarmInfoEntity mailAlarmInfoEntity = mailAlarmInfoRepository.findByInterviewScheduleKey(
+            interviewScheduleEntity.getInterviewScheduleKey())
+        .orElseThrow(() -> new CustomException(MAIL_ALARM_INFO_NOT_FOUND));
+
+    return MailAlarmInfoDto.builder()
+        .mailContent(mailAlarmInfoEntity.getMailContent())
+        .mailSendDateTime(mailAlarmInfoEntity.getMailSendDateTime())
+        .build();
+  }
+
+  /**
    * 예약된 메일 수정
    *
    * @param companyKey       회사 KEY
@@ -121,6 +154,7 @@ public class MailAlarmInfoService {
   @Transactional
   public void editMailAlarmInfo(String companyKey, String jobPostingKey, Long stepId,
       MailAlarmInfoDto mailAlarmInfoDto, UserDetails userDetails) {
+    log.info("예약된 메일 수정");
 
     CompanyEntity company = findCompanyByPrincipal(userDetails);
 
@@ -160,6 +194,7 @@ public class MailAlarmInfoService {
    * @throws CustomException FAILED_MAIL_UNSCHEDULING 메일 예약 취소를 실패함
    */
   public void unscheduleMailJob(MailAlarmInfoEntity mailAlarmInfo) {
+    log.info("기존의 스케줄링된 작업 삭제");
 
     try {
       TriggerKey triggerKey = TriggerKey.triggerKey("mailTrigger" + mailAlarmInfo.getId(),
@@ -173,6 +208,7 @@ public class MailAlarmInfoService {
 
   // 예약 메일 스케쥴링
   private void scheduleMailJob(MailAlarmInfoEntity mailAlarmInfo) throws SchedulerException {
+    log.info("예약 메일 스케줄링");
 
     JobDetail jobDetail = JobBuilder.newJob(MailJob.class)
         .withIdentity("mailJob" + mailAlarmInfo.getId(), "mailGroup")
@@ -201,6 +237,7 @@ public class MailAlarmInfoService {
   @Transactional
   public void sendInterviewMailToCandidates(List<InterviewScheduleParticipantsEntity> participants,
       MailAlarmInfoEntity mailAlarmInfoEntity) {
+    log.info("예약된 시간이 되어 지원자들에게 메일 발송 - 면접");
 
     JobPostingEntity jobPostingEntity = jobPostingRepository.findByJobPostingKey(
             mailAlarmInfoEntity.getJobPostingKey())
@@ -247,6 +284,7 @@ public class MailAlarmInfoService {
   @Transactional
   public void sendTaskMailToCandidates(List<CandidateListEntity> participants,
       MailAlarmInfoEntity mailAlarmInfoEntity) {
+    log.info("예약된 시간이 되어 지원자들에게 메일 발송 - 과제");
 
     JobPostingEntity jobPostingEntity = jobPostingRepository.findByJobPostingKey(
             mailAlarmInfoEntity.getJobPostingKey())
@@ -296,42 +334,47 @@ public class MailAlarmInfoService {
     // 과제인지 면접인지 구분
     // 과제라면 firstInterviewDate가 null
     // 면접이라면 firstInterviewDate가 null이 아님
-    // isTask = true -> 과제
-    // isTask = false -> 면접
     boolean isTask = interviewScheduleEntity.getFirstInterviewDate() == null;
 
     JobPostingEntity jobPostingEntity = jobPostingRepository.findByJobPostingKey(
             interviewScheduleEntity.getJobPostingKey())
         .orElseThrow(() -> new CustomException(JOB_POSTING_NOT_FOUND));
 
-    JobPostingStepEntity jobPostingStep = jobPostingStepRepository.findById(
-            participants.get(0).getJobPostingStepId())
+    JobPostingStepEntity jobPostingStepEntity = jobPostingStepRepository.findById(
+            interviewScheduleEntity.getJobPostingStepId())
         .orElseThrow(() -> new CustomException(JOB_POSTING_STEP_NOT_FOUND));
 
     if (isTask) {
-      // 과제일 경우
-      for (InterviewScheduleParticipantsEntity participant : participants) {
-        String to = candidateRepository.findByCandidateKey(participant.getCandidateKey())
+      log.info("과제일 경우 과제 취소 메일 발송");
+
+      List<CandidateListEntity> candidateListEntities = candidateListRepository.findAllByJobPostingKeyAndJobPostingStepId(
+          interviewScheduleEntity.getJobPostingKey(),
+          interviewScheduleEntity.getJobPostingStepId());
+
+      for (CandidateListEntity candidate : candidateListEntities) {
+        String to = candidateRepository.findByCandidateKey(candidate.getCandidateKey())
             .orElseThrow(() -> new CustomException(USER_NOT_FOUND)).getEmail();
+
+        LocalDateTime scheduleDateTime = LocalDateTime.of(
+            interviewScheduleEntity.getLastInterviewDate(), LocalTime.of(23, 59, 59));
 
         String subject = "과제 취소 안내 : " + jobPostingEntity.getTitle();
         String text = "과제 일정이 <strong>취소</strong>되었음을 안내드립니다.<br><br>"
-            + "취소된 과제 정보<br>" + jobPostingEntity.getTitle() + " - " + jobPostingStep.getStep()
-            + "<br> 취소된 과제 마감 일시 : " + participant.getInterviewEndDatetime()
-            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm"))
-            + "<br><br>";
+            + "취소된 과제 정보<br>" + jobPostingEntity.getTitle() + " - " + jobPostingStepEntity.getStep()
+            + "<br> 취소된 과제 마감 일시 : " + scheduleDateTime.format(
+            DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm")) + "<br><br>";
 
         mailComponent.sendHtmlMail(to, subject, text, true);
       }
     } else {
-      // 면접일 경우
+      log.info("면접일 경우 면접 취소 메일 발송");
       for (InterviewScheduleParticipantsEntity participant : participants) {
         String to = candidateRepository.findByCandidateKey(participant.getCandidateKey())
             .orElseThrow(() -> new CustomException(USER_NOT_FOUND)).getEmail();
 
         String subject = "면접 일정 취소 안내 : " + jobPostingEntity.getTitle();
         String text = "예정되었던 면접 일정이 <strong>취소</strong>되었음을 안내드립니다.<br><br>"
-            + "취소된 면접 정보<br>" + jobPostingEntity.getTitle() + " - " + jobPostingStep.getStep()
+            + "취소된 면접 정보<br>" + jobPostingEntity.getTitle() + " - " + jobPostingStepEntity.getStep()
             + "<br> 취소된 면접 일시 : " + participant.getInterviewStartDatetime()
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm"));
 
@@ -361,6 +404,7 @@ public class MailAlarmInfoService {
    * @throws CustomException USER_NOT_FOUND 사용자 없음
    */
   private void verifyCompanyOwnership(CompanyEntity company, String companyKey) {
+    log.info("회사 본인 확인");
 
     if (!company.getCompanyKey().equals(companyKey)) {
       throw new CustomException(USER_NOT_FOUND);

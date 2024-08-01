@@ -1,13 +1,13 @@
 package com.ctrls.auto_enter_view.service;
 
 import static com.ctrls.auto_enter_view.enums.ErrorCode.JOB_POSTING_NOT_FOUND;
-import static com.ctrls.auto_enter_view.enums.ErrorCode.RESUME_NOT_FOUND;
 import static com.ctrls.auto_enter_view.enums.ErrorCode.USER_NOT_FOUND;
 
 import com.ctrls.auto_enter_view.dto.candidateList.CandidateTechStackInterviewInfoDto;
 import com.ctrls.auto_enter_view.dto.jobPosting.JobPostingDto;
 import com.ctrls.auto_enter_view.dto.jobPosting.JobPostingDto.Request;
 import com.ctrls.auto_enter_view.dto.jobPosting.JobPostingEveryInfoDto;
+import com.ctrls.auto_enter_view.entity.AppliedJobPostingEntity;
 import com.ctrls.auto_enter_view.entity.CandidateListEntity;
 import com.ctrls.auto_enter_view.entity.CompanyEntity;
 import com.ctrls.auto_enter_view.entity.InterviewScheduleEntity;
@@ -19,6 +19,7 @@ import com.ctrls.auto_enter_view.entity.ResumeTechStackEntity;
 import com.ctrls.auto_enter_view.enums.ErrorCode;
 import com.ctrls.auto_enter_view.enums.TechStack;
 import com.ctrls.auto_enter_view.exception.CustomException;
+import com.ctrls.auto_enter_view.repository.AppliedJobPostingRepository;
 import com.ctrls.auto_enter_view.repository.CandidateListRepository;
 import com.ctrls.auto_enter_view.repository.CompanyRepository;
 import com.ctrls.auto_enter_view.repository.InterviewScheduleParticipantsRepository;
@@ -52,7 +53,7 @@ public class JobPostingStepService {
   private final ResumeTechStackRepository resumeTechStackRepository;
   private final InterviewScheduleRepository interviewScheduleRepository;
   private final InterviewScheduleParticipantsRepository interviewScheduleParticipantsRepository;
-
+  private final AppliedJobPostingRepository appliedJobPostingRepository;
   /**
    * 채용 공고 단계 생성하기
    *
@@ -60,7 +61,6 @@ public class JobPostingStepService {
    * @param request JobPostingDto.Request
    */
   public void createJobPostingStep(JobPostingEntity entity, JobPostingDto.Request request) {
-
     List<String> jobPostingStep = request.getJobPostingStep();
 
     List<JobPostingStepEntity> entities = jobPostingStep.stream()
@@ -74,15 +74,16 @@ public class JobPostingStepService {
   }
 
   /**
-   * 전체 채용 단계의 지원자 리스트 조회 채용단계 ID - 지원자 key, 지원자 이름, 이력서 key, 기술 스택 리스트, 면접 일시
+   * 전체 채용 단계의 지원자 리스트 조회 : 채용단계 ID당 - 지원자 key, 지원자 이름, 이력서 key, 기술 스택 리스트, 면접 일시
    *
    * @param jobPostingKey 채용공고 KEY
    * @return 채용 단계의 모든 정보 리스트
-   * @throws CustomException USER_NOT_FOUND, JOB_POSTING_NOT_FOUND, RESUME_NOT_FOUND
+   * @throws CustomException USER_NOT_FOUND, JOB_POSTING_NOT_FOUND
    */
   @Transactional(readOnly = true)
   public List<JobPostingEveryInfoDto> getCandidatesListByStepId(UserDetails userDetails,
       String jobPostingKey) {
+    log.info("전체 채용 단계의 지원자 리스트 조회");
 
     List<JobPostingEveryInfoDto> jobPostingEveryInfoDtoList = new ArrayList<>();
 
@@ -95,6 +96,8 @@ public class JobPostingStepService {
     // 해당 채용 공고의 단계를 전부 가져오기
     List<JobPostingStepEntity> jobPostingStepEntityList = jobPostingStepRepository.findAllByJobPostingKey(
         jobPostingKey);
+
+    log.info("채용 공고 단계 : " + jobPostingStepEntityList.size() + "개");
 
     // 단계마다 지원자 리스트를 가져오기 : candidates_list에서 지원자Key, 지원자 이름
     // -> 이력서 Key 찾기 -> 이력서 Key로 기술 스택 리스트 가져오기
@@ -111,7 +114,7 @@ public class JobPostingStepService {
           && interviewScheduleEntity.get().getFirstInterviewDate() != null;
 
       if (isTask) {
-        // 과제라면
+        log.info("과제일 경우");
         // candidateList에서 지원자 목록 불러오기
         // 지원자 Key, 지원자 이름, 이력서 Key, 기술스택 리스트, 과제 마감일시
         List<CandidateListEntity> candidateList = getCandidateList(jobPostingKey,
@@ -133,7 +136,7 @@ public class JobPostingStepService {
             .build()
         );
       } else if (isInterview) {
-        // 면접이라면
+        log.info("면접일 경우");
         // candidateList에서 지원자 목록 불러오기
         // 지원자 Key, 지원자 이름, 이력서 Key, 기술스택 리스트, 면접 시작일시
         List<CandidateListEntity> candidateList = getCandidateList(jobPostingKey,
@@ -155,7 +158,7 @@ public class JobPostingStepService {
             .build()
         );
       } else {
-        // 면접 일정이나 과제 일정을 아직 안 만든 단계
+        log.info("면접 일정이나 과제 일정을 아직 안 만든 단계일 경우");
         // 지원자 Key, 지원자 이름, 이력서 Key, 기술스택 리스트, null
         List<CandidateListEntity> candidateList = getCandidateList(jobPostingKey,
             jobPostingStepEntity.getId());
@@ -213,6 +216,7 @@ public class JobPostingStepService {
    * @throws CustomException USER_NOT_FOUND : 사용자를 찾을 수 없는 경우
    */
   private void verifyCompanyOwnership(CompanyEntity company, JobPostingEntity jobPosting) {
+    log.info("회사 본인 확인");
     if (!company.getCompanyKey().equals(jobPosting.getCompanyKey())) {
       throw new CustomException(USER_NOT_FOUND);
     }
@@ -234,11 +238,10 @@ public class JobPostingStepService {
    *
    * @param candidateKey 지원자 PK
    * @return ResumeEntity
-   * @throws CustomException RESUME_NOT_FOUND : 이력서를 찾을 수 없는 경우
    */
   private ResumeEntity findResumeEntityByCandidateKey(String candidateKey) {
     return resumeRepository.findByCandidateKey(candidateKey)
-        .orElseThrow(() -> new CustomException(RESUME_NOT_FOUND));
+        .orElseGet(() -> ResumeEntity.builder().build());
   }
 
   /**
@@ -263,6 +266,8 @@ public class JobPostingStepService {
    */
   private CandidateTechStackInterviewInfoDto mapToCandidateTechStackListDtoInterview(
       CandidateListEntity candidateListEntity, Long stepId) {
+    log.info("면접 : CandidateListEntity & stepId -> CandidateTechStackInterviewInfoDto 매핑");
+
     ResumeEntity resumeEntity = findResumeEntityByCandidateKey(
         candidateListEntity.getCandidateKey());
 
@@ -290,6 +295,8 @@ public class JobPostingStepService {
    */
   private CandidateTechStackInterviewInfoDto mapToCandidateTechStackListDtoTask(
       CandidateListEntity candidateListEntity, Long stepId) {
+    log.info("CandidateListEntity & stepId -> CandidateTechStackInterviewInfoDto 매핑");
+
     ResumeEntity resumeEntity = findResumeEntityByCandidateKey(
         candidateListEntity.getCandidateKey());
 
@@ -324,6 +331,8 @@ public class JobPostingStepService {
    */
   private CandidateTechStackInterviewInfoDto mapToCandidateTechStackListDtoNothing(
       CandidateListEntity candidateListEntity) {
+    log.info("CandidateListEntity & stepId -> CandidateTechStackInterviewInfoDto 매핑");
+
     ResumeEntity resumeEntity = findResumeEntityByCandidateKey(
         candidateListEntity.getCandidateKey());
 
@@ -344,7 +353,7 @@ public class JobPostingStepService {
    * @param jobPostingKey 채용 공고 PK
    */
   public void deleteJobPostingStep(String jobPostingKey) {
-
+    log.info("채용 공고 단계 삭제");
     jobPostingStepRepository.deleteByJobPostingKey(jobPostingKey);
   }
 
@@ -361,7 +370,7 @@ public class JobPostingStepService {
   @Transactional
   public void editStepId(Long currentStepId, List<String> candidateKeys, String jobPostingKey,
       UserDetails userDetails) {
-
+    log.info("채용 단계 올리기 : 현재 단계 - " + currentStepId);
     CompanyEntity companyEntity = companyRepository.findByEmail(userDetails.getUsername())
         .orElseThrow(() -> new CustomException(ErrorCode.COMPANY_NOT_FOUND));
 
@@ -399,9 +408,21 @@ public class JobPostingStepService {
       throw new CustomException(ErrorCode.NEXT_STEP_NOT_FOUND);
     }
 
-    // 지원자의 단계 ID 업데이트
+    JobPostingStepEntity nextStep = nextStepOptional.get();
+    String nextStepName = nextStep.getStep();
+
+    // 지원자의 단계 ID 업데이트 및 AppliedJobPostingEntity의 stepName 업데이트
     for (CandidateListEntity candidate : candidateListEntities) {
       candidate.updateJobPostingStepId(nextStepId);
+
+      Optional<AppliedJobPostingEntity> appliedJobPostingOptional = appliedJobPostingRepository
+          .findByCandidateKeyAndJobPostingKey(candidate.getCandidateKey(), jobPostingKey);
+
+      if (appliedJobPostingOptional.isPresent()) {
+        AppliedJobPostingEntity appliedJobPosting = appliedJobPostingOptional.get();
+        appliedJobPosting.updateStepName(nextStepName);
+      }
     }
+
   }
 }

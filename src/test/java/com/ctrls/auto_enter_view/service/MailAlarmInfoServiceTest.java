@@ -13,7 +13,9 @@ import static com.ctrls.auto_enter_view.enums.JobCategory.BACKEND;
 import static com.ctrls.auto_enter_view.enums.UserRole.ROLE_CANDIDATE;
 import static com.ctrls.auto_enter_view.enums.UserRole.ROLE_COMPANY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -38,6 +40,7 @@ import com.ctrls.auto_enter_view.entity.JobPostingEntity;
 import com.ctrls.auto_enter_view.entity.JobPostingStepEntity;
 import com.ctrls.auto_enter_view.entity.MailAlarmInfoEntity;
 import com.ctrls.auto_enter_view.exception.CustomException;
+import com.ctrls.auto_enter_view.repository.CandidateListRepository;
 import com.ctrls.auto_enter_view.repository.CandidateRepository;
 import com.ctrls.auto_enter_view.repository.CompanyRepository;
 import com.ctrls.auto_enter_view.repository.InterviewScheduleRepository;
@@ -55,6 +58,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -73,6 +77,9 @@ class MailAlarmInfoServiceTest {
 
   @Mock
   private CandidateRepository candidateRepository;
+
+  @Mock
+  private CandidateListRepository candidateListRepository;
 
   @Mock
   private CompanyRepository companyRepository;
@@ -288,6 +295,133 @@ class MailAlarmInfoServiceTest {
     });
 
     assertEquals(FAILED_MAIL_SCHEDULING, thrownException.getErrorCode());
+  }
+
+  @Test
+  @DisplayName("메일 예약 조회 : 성공")
+  void getMailAlarmInfo_Success() {
+    String companyKey = "companyKey";
+    String jobPostingKey = "jobPostingKey";
+    Long stepId = 1L;
+    String email = "test@example.com";
+
+    UserDetails userDetails = mock(UserDetails.class);
+    when(userDetails.getUsername()).thenReturn(email);
+
+    CompanyEntity companyEntity = CompanyEntity.builder()
+        .companyKey(companyKey)
+        .email(email)
+        .build();
+
+    InterviewScheduleEntity interviewScheduleEntity = InterviewScheduleEntity.builder()
+        .interviewScheduleKey("interviewScheduleKey")
+        .lastInterviewDate(LocalDate.of(2025, 5, 1))
+        .build();
+
+    MailAlarmInfoEntity mailAlarmInfoEntity = MailAlarmInfoEntity.builder()
+        .mailContent("메일 내용")
+        .mailSendDateTime(LocalDateTime.now().plusDays(1))
+        .build();
+
+    when(companyRepository.findByEmail(email))
+        .thenReturn(Optional.of(companyEntity));
+    when(interviewScheduleRepository.findByJobPostingKeyAndJobPostingStepId(jobPostingKey, stepId))
+        .thenReturn(Optional.of(interviewScheduleEntity));
+    when(mailAlarmInfoRepository.findByInterviewScheduleKey(
+        interviewScheduleEntity.getInterviewScheduleKey()))
+        .thenReturn(Optional.of(mailAlarmInfoEntity));
+
+    MailAlarmInfoDto result = mailAlarmInfoService.getMailAlarmInfo(companyKey, jobPostingKey,
+        stepId, userDetails);
+
+    assertNotNull(result);
+    assertEquals("메일 내용", result.getMailContent());
+    assertNotNull(result.getMailSendDateTime());
+  }
+
+  @Test
+  @DisplayName("메일 예약 조회 : 실패 - USER_NOT_FOUND")
+  void getMailAlarmInfo_CompanyNotFoundFailure() {
+    String companyKey = "companyKey";
+    String jobPostingKey = "jobPostingKey";
+    Long stepId = 1L;
+    String email = "test@example.com";
+
+    UserDetails userDetails = mock(UserDetails.class);
+    when(userDetails.getUsername()).thenReturn(email);
+
+    when(companyRepository.findByEmail(email))
+        .thenReturn(Optional.empty());
+
+    CustomException thrownException = assertThrows(CustomException.class, () ->
+        mailAlarmInfoService.getMailAlarmInfo(companyKey, jobPostingKey, stepId, userDetails)
+    );
+
+    assertEquals(USER_NOT_FOUND, thrownException.getErrorCode());
+  }
+
+  @Test
+  @DisplayName("메일 예약 조회 : 실패 - INTERVIEW_SCHEDULE_NOT_FOUND")
+  void getMailAlarmInfo_InterviewScheduleNotFoundFailure() {
+    String companyKey = "companyKey";
+    String jobPostingKey = "jobPostingKey";
+    Long stepId = 1L;
+    String email = "test@example.com";
+
+    UserDetails userDetails = mock(UserDetails.class);
+    when(userDetails.getUsername()).thenReturn(email);
+
+    CompanyEntity companyEntity = CompanyEntity.builder()
+        .companyKey(companyKey)
+        .email(email)
+        .build();
+
+    when(companyRepository.findByEmail(email))
+        .thenReturn(Optional.of(companyEntity));
+    when(interviewScheduleRepository.findByJobPostingKeyAndJobPostingStepId(jobPostingKey, stepId))
+        .thenReturn(Optional.empty());
+
+    CustomException thrownException = assertThrows(CustomException.class, () ->
+        mailAlarmInfoService.getMailAlarmInfo(companyKey, jobPostingKey, stepId, userDetails)
+    );
+
+    assertEquals(INTERVIEW_SCHEDULE_NOT_FOUND, thrownException.getErrorCode());
+  }
+
+  @Test
+  @DisplayName("메일 예약 조회 : 실패 - MAIL_ALARM_INFO_NOT_FOUND")
+  void getMailAlarmInfo_MailAlarmInfoNotFoundFailure() {
+    String companyKey = "companyKey";
+    String jobPostingKey = "jobPostingKey";
+    Long stepId = 1L;
+    String email = "test@example.com";
+
+    UserDetails userDetails = mock(UserDetails.class);
+    when(userDetails.getUsername()).thenReturn(email);
+
+    CompanyEntity companyEntity = CompanyEntity.builder()
+        .companyKey(companyKey)
+        .email(email)
+        .build();
+
+    InterviewScheduleEntity interviewScheduleEntity = InterviewScheduleEntity.builder()
+        .interviewScheduleKey("interviewScheduleKey")
+        .lastInterviewDate(LocalDate.of(2025, 5, 1))
+        .build();
+
+    when(companyRepository.findByEmail(email))
+        .thenReturn(Optional.of(companyEntity));
+    when(interviewScheduleRepository.findByJobPostingKeyAndJobPostingStepId(jobPostingKey, stepId))
+        .thenReturn(Optional.of(interviewScheduleEntity));
+    when(mailAlarmInfoRepository.findByInterviewScheduleKey(
+        interviewScheduleEntity.getInterviewScheduleKey()))
+        .thenReturn(Optional.empty());
+
+    CustomException thrownException = assertThrows(CustomException.class, () ->
+        mailAlarmInfoService.getMailAlarmInfo(companyKey, jobPostingKey, stepId, userDetails)
+    );
+
+    assertEquals(MAIL_ALARM_INFO_NOT_FOUND, thrownException.getErrorCode());
   }
 
   @Test
@@ -1017,6 +1151,7 @@ class MailAlarmInfoServiceTest {
     InterviewScheduleEntity interviewScheduleEntity = InterviewScheduleEntity.builder()
         .jobPostingKey(jobPostingKey)
         .firstInterviewDate(LocalDate.of(2024, 7, 25))
+        .jobPostingStepId(1L)
         .build();
 
     JobPostingEntity jobPostingEntity = JobPostingEntity.builder()
@@ -1056,28 +1191,37 @@ class MailAlarmInfoServiceTest {
         Collections.singletonList(participant)
     );
 
-    verify(mailComponent, times(1)).sendHtmlMail(
-        eq("test@example.com"),
-        eq("면접 일정 취소 안내 : " + jobPostingEntity.getTitle()),
-        contains(
-            "예정되었던 면접 일정이 <strong>취소</strong>되었음을 안내드립니다.<br><br>취소된 면접 정보<br>"
-                + jobPostingEntity.getTitle() + " - " + jobPostingStepEntity.getStep()
-                + "<br> 취소된 면접 일시 : "
-                + participant.getInterviewStartDatetime().format(
-                DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm"))),
-        eq(true)
-    );
+    ArgumentCaptor<String> toCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> subjectCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Boolean> htmlCaptor = ArgumentCaptor.forClass(Boolean.class);
+
+    verify(mailComponent).sendHtmlMail(toCaptor.capture(), subjectCaptor.capture(),
+        textCaptor.capture(), htmlCaptor.capture());
+
+    assertEquals("test@example.com", toCaptor.getValue());
+    assertEquals("면접 일정 취소 안내 : " + jobPostingEntity.getTitle(), subjectCaptor.getValue());
+    assertTrue(textCaptor.getValue().contains(
+        "예정되었던 면접 일정이 <strong>취소</strong>되었음을 안내드립니다.<br><br>취소된 면접 정보<br>"
+            + jobPostingEntity.getTitle() + " - " + jobPostingStepEntity.getStep()
+            + "<br> 취소된 면접 일시 : "
+            + participant.getInterviewStartDatetime()
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm"))
+    ));
+    assertTrue(htmlCaptor.getValue());
   }
 
   @Test
   @DisplayName("과제 취소 이메일 발송 : 성공")
   void sendTaskCancellationMailToParticipants_Success() {
     String jobPostingKey = "jobPostingKey";
-    String candidateKey = "candidateKey";
+    Long jobPostingStepId = 1L;
 
     InterviewScheduleEntity interviewScheduleEntity = InterviewScheduleEntity.builder()
         .jobPostingKey(jobPostingKey)
+        .jobPostingStepId(jobPostingStepId)
         .firstInterviewDate(null)
+        .lastInterviewDate(LocalDate.now())
         .build();
 
     JobPostingEntity jobPostingEntity = JobPostingEntity.builder()
@@ -1086,48 +1230,61 @@ class MailAlarmInfoServiceTest {
         .build();
 
     JobPostingStepEntity jobPostingStepEntity = JobPostingStepEntity.builder()
-        .id(1L)
+        .id(jobPostingStepId)
         .jobPostingKey(jobPostingKey)
         .step("서류 단계")
         .build();
 
-    InterviewScheduleParticipantsEntity participant = InterviewScheduleParticipantsEntity.builder()
-        .candidateKey(candidateKey)
-        .interviewEndDatetime(LocalDateTime.of(2025, 5, 1, 14, 0))
-        .jobPostingStepId(1L)
+    CandidateEntity candidate = CandidateEntity.builder()
+        .candidateKey("candidateKey")
+        .email("test@example.com")
         .build();
 
-    CandidateEntity candidate = CandidateEntity.builder()
-        .candidateKey(candidateKey)
-        .email("test@example.com")
+    CandidateListEntity candidateListEntity = CandidateListEntity.builder()
+        .candidateKey("candidateKey")
         .build();
 
     when(jobPostingRepository.findByJobPostingKey(jobPostingKey))
         .thenReturn(Optional.of(jobPostingEntity));
-    when(jobPostingStepRepository.findById(1L))
+    when(jobPostingStepRepository.findById(jobPostingStepId))
         .thenReturn(Optional.of(jobPostingStepEntity));
-    when(candidateRepository.findByCandidateKey(candidateKey))
+    when(candidateRepository.findByCandidateKey("candidateKey"))
         .thenReturn(Optional.of(candidate));
+    when(candidateListRepository.findAllByJobPostingKeyAndJobPostingStepId(jobPostingKey,
+        jobPostingStepId))
+        .thenReturn(Collections.singletonList(candidateListEntity));
 
     doNothing().when(mailComponent)
         .sendHtmlMail(anyString(), anyString(), anyString(), anyBoolean());
 
     mailAlarmInfoService.sendCancellationMailToParticipants(
         interviewScheduleEntity,
-        Collections.singletonList(participant)
+        Collections.emptyList()
     );
 
+    ArgumentCaptor<String> toCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> subjectCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Boolean> htmlCaptor = ArgumentCaptor.forClass(Boolean.class);
+
     verify(mailComponent, times(1)).sendHtmlMail(
-        eq("test@example.com"),
-        eq("과제 취소 안내 : " + jobPostingEntity.getTitle()),
-        contains(
-            "과제 일정이 <strong>취소</strong>되었음을 안내드립니다.<br><br>취소된 과제 정보<br>"
-                + jobPostingEntity.getTitle() + " - " + jobPostingStepEntity.getStep()
-                + "<br> 취소된 과제 마감 일시 : "
-                + participant.getInterviewEndDatetime().format(
-                DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm"))),
-        eq(true)
+        toCaptor.capture(),
+        subjectCaptor.capture(),
+        textCaptor.capture(),
+        htmlCaptor.capture()
     );
+
+    assertEquals("test@example.com", toCaptor.getValue());
+    assertEquals("과제 취소 안내 : " + jobPostingEntity.getTitle(), subjectCaptor.getValue());
+    assertTrue(textCaptor.getValue().contains(
+        "과제 일정이 <strong>취소</strong>되었음을 안내드립니다.<br><br>"
+            + "취소된 과제 정보<br>" + jobPostingEntity.getTitle() + " - " + jobPostingStepEntity.getStep()
+            + "<br> 취소된 과제 마감 일시 : "
+            + LocalDateTime.of(
+                interviewScheduleEntity.getLastInterviewDate(), LocalTime.of(23, 59, 59))
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE HH:mm"))
+    ));
+    assertTrue(htmlCaptor.getValue());
   }
 
   @Test
@@ -1161,14 +1318,16 @@ class MailAlarmInfoServiceTest {
   @DisplayName("면접 일정 취소 이메일 발송 : 실패 - JOB_POSTING_STEP_NOT_FOUND")
   void sendCancellationMailToParticipants_JobPostingStepNotFoundFailure() {
     String jobPostingKey = "jobPostingKey";
+    Long jobPostingStepId = 1L;
 
     InterviewScheduleEntity interviewScheduleEntity = InterviewScheduleEntity.builder()
         .jobPostingKey(jobPostingKey)
+        .jobPostingStepId(jobPostingStepId)
         .build();
 
     InterviewScheduleParticipantsEntity participant = InterviewScheduleParticipantsEntity.builder()
         .candidateKey("candidateKey")
-        .jobPostingStepId(1L)
+        .jobPostingStepId(jobPostingStepId)
         .build();
 
     JobPostingEntity jobPostingEntity = JobPostingEntity.builder()
@@ -1178,7 +1337,7 @@ class MailAlarmInfoServiceTest {
 
     when(jobPostingRepository.findByJobPostingKey(jobPostingKey))
         .thenReturn(Optional.of(jobPostingEntity));
-    when(jobPostingStepRepository.findById(1L))
+    when(jobPostingStepRepository.findById(jobPostingStepId))
         .thenReturn(Optional.empty());
 
     CustomException thrownException = assertThrows(CustomException.class, () ->
@@ -1199,6 +1358,9 @@ class MailAlarmInfoServiceTest {
 
     InterviewScheduleEntity interviewScheduleEntity = InterviewScheduleEntity.builder()
         .jobPostingKey(jobPostingKey)
+        .firstInterviewDate(LocalDate.parse("2024-04-04"))
+        .lastInterviewDate(LocalDate.parse("2024-04-05"))
+        .jobPostingStepId(1L)
         .build();
 
     JobPostingEntity jobPostingEntity = JobPostingEntity.builder()
